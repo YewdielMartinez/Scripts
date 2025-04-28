@@ -59,29 +59,51 @@ function Solicitar-Puerto {
 # ============================================================
 # Función para configurar IIS (instala si es necesario)
 function Conf-IIS {
-    param (
-        [int]$port
-    )
+    Write-Host "`n=== Configurando IIS con puertos fijos ==="
+    Write-Host "HTTP: $($global:ports_config.IIS_HTTP), HTTPS: $($global:ports_config.IIS_HTTPS)"
     
+    # Verificar puertos
+    if (Test-PortInUse $global:ports_config.IIS_HTTP) {
+        Write-Host "ERROR: El puerto HTTP $($global:ports_config.IIS_HTTP) está en uso" -ForegroundColor Red
+        return
+    }
+    if (Test-PortInUse $global:ports_config.IIS_HTTPS) {
+        Write-Host "ERROR: El puerto HTTPS $($global:ports_config.IIS_HTTPS) está en uso" -ForegroundColor Red
+        return
+    }
+
     # Instalar IIS si no está instalado
     if (-not (Get-WindowsFeature -Name Web-Server).Installed) {
-        Write-Host "Instalando IIS(Espere un momento)..."
+        Write-Host "Instalando IIS..."
         Install-WindowsFeature -Name Web-Server -IncludeManagementTools -ErrorAction Stop
     }
-    
-    # Habilitar el puerto en el firewall
-    New-NetFirewallRule -DisplayName "IIS Port $port" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -ErrorAction SilentlyContinue
-    
-    # Importar módulo de administración de IIS
+
+    # Configurar bindings HTTP
     Import-Module WebAdministration -ErrorAction SilentlyContinue
     
-    # Remover binding en el puerto 80 (si existe) y agregar uno nuevo en el puerto elegido
+    # Eliminar bindings por defecto
     Remove-WebBinding -Name "Default Web Site" -Protocol "http" -Port 80 -ErrorAction SilentlyContinue
-    New-WebBinding -Name "Default Web Site" -Protocol "http" -Port $port -IPAddress "*"
+    Remove-WebBinding -Name "Default Web Site" -Protocol "https" -Port 443 -ErrorAction SilentlyContinue
     
-    # Reiniciar IIS para aplicar cambios
+    # Crear nuevos bindings
+    New-WebBinding -Name "Default Web Site" -Protocol "http" -Port $global:ports_config.IIS_HTTP -IPAddress "*"
+    New-WebBinding -Name "Default Web Site" -Protocol "https" -Port $global:ports_config.IIS_HTTPS -IPAddress "*"
+    
+    # Configurar certificado SSL
+    $cert = New-SelfSignedCertificate -DnsName "localhost" -CertStoreLocation "cert:\LocalMachine\My"
+    $binding = Get-WebBinding -Name "Default Web Site" -Protocol "https" -Port $global:ports_config.IIS_HTTPS
+    $binding.AddSslCertificate($cert.Thumbprint, "My")
+
+    # Configurar firewall
+    New-NetFirewallRule -DisplayName "IIS HTTP $($global:ports_config.IIS_HTTP)" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $global:ports_config.IIS_HTTP
+    New-NetFirewallRule -DisplayName "IIS HTTPS $($global:ports_config.IIS_HTTPS)" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $global:ports_config.IIS_HTTPS
+
+    # Reiniciar IIS
     iisreset | Out-Null
-    Write-Host "IIS configurado correctamente en el puerto $port."
+    
+    Write-Host "IIS configurado correctamente:" -ForegroundColor Green
+    Write-Host " - HTTP disponible en: http://localhost:$($global:ports_config.IIS_HTTP)" -ForegroundColor Cyan
+    Write-Host " - HTTPS disponible en: https://localhost:$($global:ports_config.IIS_HTTPS)" -ForegroundColor Cyan
 }
 
 # ============================================================
@@ -95,7 +117,7 @@ function Dependencias {
         Write-Host "Visual C++ Redistributable ya está instalado."
     }
     else {
-        Write-Host "No esta instalado Visual C++. Descargando e instalando..."
+        Write-Host "Falta Visual C++. Descargando e instalando..."
         $vcUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
         $vcInstaller = "$env:TEMP\vc_redist.x64.exe"
         Invoke-WebRequest -Uri $vcUrl -OutFile $vcInstaller -UseBasicParsing
@@ -108,7 +130,7 @@ function Dependencias {
 # ============================================================
 function Get-Tomcat-Versions {
     $versions = @{}  # Inicializar el diccionario de versiones
-    Write-Host "`nObteniendo Versiones de Apache Tomcat..."
+    Write-Host "`nObteniendo versiones de Apache Tomcat..."
 
     try {
         # Definir URLs de Tomcat 10 y 11
@@ -126,7 +148,7 @@ function Get-Tomcat-Versions {
 
             # Intentar obtener la página con User-Agent
             $response = Invoke-WebRequest -Uri $url -UseBasicParsing -Headers @{ "User-Agent" = "Mozilla/5.0" } -ErrorAction Stop
-            Write-Host ("Código de estado HTTP para {0}: {1}" -f $tomcat, $response.StatusCode)
+            # Write-Host ("Código de estado HTTP para {0}: {1}" -f $tomcat, $response.StatusCode)
 
             # Obtener el contenido HTML
             $html = $response.Content
@@ -138,8 +160,8 @@ function Get-Tomcat-Versions {
             }
 
             # Mostrar un fragmento del contenido recibido
-            Write-Host "HTML recibido para $tomcat (primeros 500 caracteres):"
-            Write-Host ($html.Substring(0, [math]::Min(500, $html.Length)))  # Evita error si el HTML es menor a 500 caracteres
+            # Write-Host "HTML recibido para $tomcat (primeros 500 caracteres):"
+            # Write-Host ($html.Substring(0, [math]::Min(500, $html.Length)))  # Evita error si el HTML es menor a 500 caracteres
 
             # Buscar versión de Tomcat
             Write-Host "Buscando la versión de $tomcat..."
@@ -147,8 +169,8 @@ function Get-Tomcat-Versions {
 
             if ($match.Success) {
                 $versions["$tomcat LTS"] = @{ Version = $match.Groups[3].Value; Url = $match.Groups[1].Value }
-                Write-Host "Versión de $tomcat encontrada: $($match.Groups[3].Value)"
-                Write-Host "URL de descarga: $($match.Groups[1].Value)"
+                # Write-Host "Versión de $tomcat encontrada: $($match.Groups[3].Value)"
+                # Write-Host "URL de descarga: $($match.Groups[1].Value)"
             }
             else {
                 Write-Host "No se encontró la versión de $tomcat."
@@ -187,7 +209,7 @@ function Install-Tomcat {
         [int]$puerto
     )
 
-    Write-Host "`n=== Instalacion de Apache Tomcat ==="
+    Write-Host "`n=== Instalación de Apache Tomcat ==="
 
     # Obtener las versiones disponibles
     $tomcatVersions = Get-Tomcat-Versions
@@ -197,8 +219,8 @@ function Install-Tomcat {
     }
 
     # Mostrar opciones disponibles
-    Write-Host "Seleccione la version a instalar de TomCat:"
-    $opciones = @{}
+    Write-Host "Seleccione la versión a instalar:"
+    $opciones = @{ }
     $index = 1
 
     foreach ($key in $tomcatVersions.Keys) {
@@ -208,6 +230,7 @@ function Install-Tomcat {
         $index++
     }
 
+    # Verificar si hay opciones antes de solicitar entrada
     if ($opciones.Count -eq 0) {
         Write-Host "No hay versiones disponibles para instalar. Abortando."
         return
@@ -215,62 +238,53 @@ function Install-Tomcat {
 
     # Solicitar selección del usuario
     do {
-        $seleccion = Read-Host "Ingrese el numero de la version a instalar (o 'S' para Abortar)"
-        if ($seleccion -eq 'A') {
+        $seleccion = Read-Host "Ingrese el número de la versión a instalar (o 's' para salir)"
+        if ($seleccion -eq 's') {
             Write-Host "Cancelando instalación de Tomcat."
             return
         }
     } while (-not $opciones.ContainsKey($seleccion))
 
+    # Obtener la versión seleccionada
     $seleccionada = $opciones[$seleccion]
     $seleccionTomcat = $tomcatVersions[$seleccionada]
 
-    Write-Host "Instalando $seleccionada - Version: $($seleccionTomcat.Version) desde: $($seleccionTomcat.Url)"
+    Write-Host "Instalando $seleccionada - Versión: $($seleccionTomcat.Version) desde: $($seleccionTomcat.Url)"
 
     # Verificar si Java está instalado
     if (-not (Get-Command java -ErrorAction SilentlyContinue)) {
-        Write-Host "Java no esta instalado. Es necesario para ejecutar Tomcat."
+        Write-Host "Java no está instalado. Es necesario para ejecutar Tomcat."
+        
+        # Preguntar si el usuario quiere instalar Java
         $respuesta = Read-Host "¿Desea instalar Java automáticamente? (s/n)"
         if ($respuesta -eq "s") {
             Install-Java
         }
         else {
-            Write-Host "No se puede continuar sin Java. Abortando instalacion de Tomcat."
+            Write-Host "No se puede continuar sin Java. Abortando instalación de Tomcat."
             return
         }
+
+        # Verificar nuevamente si Java se instaló correctamente
         if (-not (Get-Command java -ErrorAction SilentlyContinue)) {
-            Write-Host "Hubo un error instalando Java. Intentelo manualmente."
+            Write-Host "Hubo un error instalando Java. Inténtelo manualmente."
             return
         }
     }
 
-    # Verificar y configurar JAVA_HOME si no está definido
-    if (-not $env:JAVA_HOME) {
-        Write-Host "La variable JAVA_HOME no está configurada. Intentando configurarla..."
-        $javaCmd = Get-Command java -ErrorAction SilentlyContinue
-        if ($javaCmd) {
-            # Asumir que la estructura es ...\bin\java.exe y se sube dos niveles
-            $javaPath = $javaCmd.Source
-            $javaHome = Split-Path -Parent (Split-Path $javaPath -Parent)
-            $env:JAVA_HOME = $javaHome
-            Write-Host "JAVA_HOME configurado en: $env:JAVA_HOME"
-        }
-        else {
-            Write-Host "No se pudo determinar JAVA_HOME."
-        }
-    }
-
-    # Definir ruta de instalación de Tomcat
+    # Definir ruta de instalación
     $tomcatPath = "C:\Tomcat"
+
+    # Eliminar instalación previa si existe
     if (Test-Path $tomcatPath) {
-        Write-Host "Se encontró una instalacion previa de Tomcat en $tomcatPath. Se procedera a reinstalar."
+        # Write-Host "Se encontró una instalación previa de Tomcat en $tomcatPath. Se procederá a reinstalar."
         Remove-Item -Recurse -Force $tomcatPath
     }
     New-Item -ItemType Directory -Force -Path $tomcatPath | Out-Null
 
     # Descargar Tomcat
     $zipFile = "$env:TEMP\tomcat.zip"
-    Write-Host "Descargando Tomcat version $($seleccionTomcat.Version)..."
+    Write-Host "Descargando Tomcat versión $($seleccionTomcat.Version)..."
     Invoke-WebRequest -Uri $seleccionTomcat.Url -OutFile $zipFile -UseBasicParsing
 
     # Extraer archivos
@@ -292,11 +306,13 @@ function Install-Tomcat {
         Write-Host "Puerto configurado en server.xml a $puerto."
     }
     else {
-        Write-Host "No se encontro server.xml para configurar el puerto."
+        Write-Host "No se encontró server.xml para configurar el puerto."
     }
 
     # Definir la ruta del script de inicio de Tomcat
     $startupBat = Join-Path $tomcatPath "bin\startup.bat"
+
+    # Verificar si existe startup.bat y ejecutarlo
     if (Test-Path $startupBat) {
         Write-Host "Iniciando Tomcat manualmente con startup.bat..."
         $env:CATALINA_HOME = $tomcatPath
@@ -306,6 +322,7 @@ function Install-Tomcat {
     else {
         Write-Host "No se encontró startup.bat. No se pudo iniciar Tomcat."
     }
+
 }
 
 # Función para instalar Java automáticamente
@@ -343,7 +360,7 @@ function Install-Java {
 
     # Verificar si Java ya está instalado
     if (Get-Command java -ErrorAction SilentlyContinue) {
-        Write-Host "Java ya esta instalado. Saliendo del script."
+        Write-Host "Java ya está instalado. Saliendo del script."
         exit 0
     }
 
@@ -359,13 +376,12 @@ function Install-Java {
         exit 1
     }
 
-    
    
     # Mostrar versión de Java instalada
-    Write-Host "`nJava instalado correctamente. Version:"
+    Write-Host "`nJava instalado correctamente. Versión:"
     java -version
 
-    Write-Host "`nInstalacion completada."
+    Write-Host "`nInstalación completada."
 }
 
 
@@ -400,9 +416,7 @@ function Install-Nginx {
     param(
         [int]$puerto
     )
-    Write-Host "`-------------------------------"
-    Write-Host "`n--- Instalacion de Nginx ---"
-    Write-Host "`-------------------------------"
+    Write-Host "`n=== Instalacion de Nginx ==="
     
     # Obtener versiones de Nginx y seleccionar versión
     $versions = Obtener-Nginx-Versions
@@ -479,51 +493,4 @@ public class TrustAllCertsPolicy : ICertificatePolicy {
     
     # Agregar regla en el firewall
     New-NetFirewallRule -DisplayName "Nginx $puerto" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $puerto -ErrorAction SilentlyContinue
-}
-
-
-# ============================================================
-# Función para mostrar el menú principal
-function Menu-HTTP {
-    Write-Host "`n==================================="
-    Write-Host "        Menu de Instalacion        "
-    Write-Host "==================================="
-    Write-Host "1) IIS"
-    Write-Host "2) Tomcat"
-    Write-Host "3) Nginx"
-    Write-Host "4) Salir"
-}
-
-# ============================================================
-# Bucle principal del menú
-while ($true) {
-    Menu-HTTP
-    $opcion = Read-Host "Seleccione una opcion (1-5)"
-    switch ($opcion) {
-        "1" {
-            $puerto = Solicitar-Puerto -mensaje "Ingrese el puerto para IIS" -defaultPort 80
-            if ($puerto) { Conf-IIS -port $puerto }
-        }
-        "2" {
-            $puerto = Solicitar-Puerto -mensaje "Ingrese el puerto para Tomcat" -defaultPort 8080
-            if ($puerto) {
-                Install-Tomcat -puerto $puerto 
-            }
-        }
-        "3" { 
-            $puerto = Solicitar-Puerto -mensaje "Ingrese el puerto para Nginx" -defaultPort 80
-            if ($puerto) {
-                Dependencias    # Verificar Visual C++ (requisito para Nginx)
-                Install-Nginx -puerto $puerto 
-            }
-        }
-        "4" { Uninstall-Services }
-        "5" {
-            Write-Host "Saliendo..."
-            break
-        }
-        default { Write-Host "Opcion no valida. Intente nuevamente." }
-    }
-    Write-Host "`nPresione Enter para continuar..."
-    Read-Host
 }

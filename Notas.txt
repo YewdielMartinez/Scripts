@@ -754,3 +754,120 @@ function Validate-UserName {
     
     return $true
 }
+#Mail
+Get-Process -Name nginx
+Start-Process -FilePath "C:\nginx\nginx.exe" -WorkingDirectory "C:\nginx"
+Start-Process "C:\PHP\php-cgi.exe" -ArgumentList "-b 127.0.0.1:9000"
+server {
+    listen       80;
+    server_name  localhost;
+
+    root   html;
+    index  index.php index.html index.htm;
+
+    location /rainloop/ {
+        root   html;
+        index  index.php index.html index.htm;
+        try_files $uri $uri/ /index.php$is_args$args;
+
+        location ~ \.php$ {
+            include        fastcgi_params;
+            fastcgi_param  SCRIPT_FILENAME  $document_root$fastcgi_script_name;
+            fastcgi_pass   127.0.0.1:9000;
+        }
+    }
+
+    location ~ \.php$ {
+        include        fastcgi_params;
+        fastcgi_param  SCRIPT_FILENAME  $document_root$fastcgi_script_name;
+        fastcgi_pass   127.0.0.1:9000;
+    }
+}
+
+Start-Process "C:\PHP\php-cgi.exe" -ArgumentList "-b 127.0.0.1:9000"
+location /rainloop/ {
+    root   html;
+    index  index.php index.html index.htm;
+    try_files $uri $uri/ /index.php$is_args$args;
+
+    location ~ \.php$ {
+        include        fastcgi_params;
+        fastcgi_param  SCRIPT_FILENAME  $document_root$fastcgi_script_name;
+        fastcgi_pass   127.0.0.1:9000;
+    }
+}
+
+worker_processes  1;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+
+    sendfile        on;
+    keepalive_timeout  65;
+
+    server {
+        listen       80;
+        server_name  localhost;
+
+        root   html;
+        index  index.php index.html index.htm;
+
+        location /rainloop/ {
+            root   html;
+            index  index.php index.html index.htm;
+            try_files $uri $uri/ /index.php$is_args$args;
+        }
+
+        location ~ \.php$ {
+            include        fastcgi_params;
+            fastcgi_param  SCRIPT_FILENAME  $document_root$fastcgi_script_name;
+            fastcgi_pass   127.0.0.1:9000;
+        }
+
+        error_page   500 502 503 504  /50x.html;
+        location = /50x.html {
+            root   html;
+        }
+    }
+}
+Install-WindowsFeature Web-CGI
+choco install php --version=8.2 --params '"/InstallDir:C:\PHP"'
+extension_dir = "ext"
+extension=openssl
+extension=mbstring
+extension=pdo_mysql
+extension=mysqli
+extension=curl
+extension=zip
+
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <system.webServer>
+
+        <!-- Documento predeterminado -->
+        <defaultDocument>
+            <files>
+                <add value="index.php" />
+            </files>
+        </defaultDocument>
+
+        <!-- Mapeo de PHP -->
+        <handlers>
+            <add name="PHP_via_FastCGI"
+                 path="*.php"
+                 verb="GET,HEAD,POST"
+                 modules="FastCgiModule"
+                 scriptProcessor="C:\PHP\php-cgi.exe"
+                 resourceType="Either"
+                 requireAccess="Script" />
+        </handlers>
+
+    </system.webServer>
+</configuration>
+& "C:\ProgramData\chocolatey\bin\choco.exe" install php --version=8.2 ...
+
