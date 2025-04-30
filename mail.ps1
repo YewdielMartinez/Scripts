@@ -299,35 +299,34 @@ function Instalar-IIS {
     Write-Host "IIS instalado correctamente."
 }
 function Instalar-PHP {
-    $phpInstallPath = "C:\PHP"
-    $phpZipUrl = "https://windows.php.net/downloads/releases/archives/php-7.4.33-nts-Win32-vc15-x64.zip"
-    $phpZipPath = "$env:TEMP\php74.zip"
-    $phpVersion = "7.4.33"
-    $appCmd = "$env:WinDir\System32\inetsrv\appcmd.exe"
+    $phpInstallPath = "C:\tools\php"  # Donde Chocolatey instala PHP
+    $phpVersionZip = "7.4.33"
+    $phpZipUrl = "https://windows.php.net/downloads/releases/php-7.4.33-Win32-vc15-x64.zip"
+    $tempZipPath = "$env:TEMP\php.zip"
 
-    Write-Host "🍫 Instalando PHP 8.2 con Chocolatey para preparar estructura..." -ForegroundColor Cyan
-    choco install php --version=8.2 --params '"/InstallDir:C:\PHP"' -y
+    Write-Host "🍫 Instalando PHP 8.2 con Chocolatey..." -ForegroundColor Cyan
+    choco install php --version=8.2 --params '"/InstallDir:C:\tools\php"' -y
 
     if (-Not (Test-Path $phpInstallPath)) {
-        Write-Host "[ERROR] La instalación de PHP 8.2 con Chocolatey falló o no se creó C:\PHP." -ForegroundColor Red
+        Write-Host "[ERROR] La instalación de PHP 8.2 con Chocolatey falló." -ForegroundColor Red
         return
     }
 
-    Write-Host "🔽 Descargando PHP $phpVersion..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri $phpZipUrl -OutFile $phpZipPath -UseBasicParsing
+    Get-ChildItem -Path $phpInstallPath -Recurse -Force | Remove-Item -Recurse -Force
 
-    Write-Host "🔁 Reemplazando archivos de PHP 8.2 con versión $phpVersion..." -ForegroundColor Cyan
-    Expand-Archive -Path $phpZipPath -DestinationPath "$env:TEMP\php74" -Force
 
-    Get-ChildItem -Path $phpInstallPath -Recurse | Remove-Item -Force -Recurse
-    Copy-Item -Path "$env:TEMP\php74\*" -Destination $phpInstallPath -Recurse -Force
+    Invoke-WebRequest -Uri $phpZipUrl -OutFile $tempZipPath -UseBasicParsing
 
-    # Configurar php.ini
-    $iniDevPath = Join-Path $phpInstallPath "php.ini-development"
+
+    Expand-Archive -Path $tempZipPath -DestinationPath $phpInstallPath -Force
+    Remove-Item $tempZipPath
+
+    # Configurar php.ini si existe php.ini-production
+    $iniProdPath = Join-Path $phpInstallPath "php.ini-development"
     $iniPath = Join-Path $phpInstallPath "php.ini"
-    if (Test-Path $iniDevPath) {
+    if (Test-Path $iniProdPath) {
         Write-Host "⚙️ Configurando php.ini..." -ForegroundColor Cyan
-        Copy-Item $iniDevPath $iniPath -Force
+        Copy-Item $iniProdPath $iniPath -Force
         (Get-Content $iniPath) | ForEach-Object {
             $_ -replace ';extension_dir = "ext"', 'extension_dir = "ext"' `
                -replace ';extension=mbstring', 'extension=mbstring' `
@@ -336,52 +335,68 @@ function Instalar-PHP {
                -replace ';date.timezone =', 'date.timezone = "America/Mexico_City"'
         } | Set-Content $iniPath -Encoding ASCII
     } else {
-        Write-Host "[ERROR] No se encontró php.ini-development." -ForegroundColor Red
+        Write-Host "[ERROR] No se encontró php.ini-production." -ForegroundColor Red
         return
     }
 
     # Registrar FastCGI en IIS
     $phpCgiPath = Join-Path $phpInstallPath "php-cgi.exe"
+    $appCmd = "$env:WinDir\System32\inetsrv\appcmd.exe"
+
     Write-Host "🧩 Registrando PHP en IIS como FastCGI..." -ForegroundColor Cyan
     & $appCmd set config /section:system.webServer/fastCgi /+"[fullPath='$phpCgiPath']"
 
     Write-Host "📄 Registrando handler para PHP (*.php)..." -ForegroundColor Cyan
     & $appCmd set config /section:system.webServer/handlers /+"[name='PHP_via_FastCGI',path='*.php',verb='GET,HEAD,POST',modules='FastCgiModule',scriptProcessor='$phpCgiPath',resourceType='Either']"
 
-    Write-Host "📃 Estableciendo index.php como documento por defecto..." -ForegroundColor Cyan
+    Write-Host "📃 Estableciendo index.php como documento por defecto..." 
     & $appCmd set config /section:defaultDocument /+files.[value='index.php']
 
-    Write-Host "🔁 Reiniciando IIS..." -ForegroundColor Cyan
+    Write-Host "🔁 Reiniciando IIS..." 
     iisreset
 
-    Write-Host "✅ PHP $phpVersion instalado correctamente con estructura de PHP 8.2." -ForegroundColor Green
+    Write-Host "✅ PHP $phpVersionZip instalado correctamente desde ZIP." 
+
+
+    
 }
 
-function Instalar-RainLoop {
-    Write-Host "Descargando e instalando RainLoop..."
-    $rainloopUrl = "https://www.rainloop.net/repository/webmail/rainloop-latest.zip"
-    $rainloopZip = "$env:TEMP\rainloop.zip"
-    $rainloopPath = "C:\inetpub\rainloop"
-    $phpCgiPath = "C:\tools\php74\php-cgi.exe"  # Ajusta si usas otra versión o ruta
 
-    if (Test-Path $rainloopPath) {
-        Remove-Item -Recurse -Force $rainloopPath
+function Instalar-SnappyMail {
+    Write-Host "Instalando SnappyMail..." -ForegroundColor Cyan
+    $snappyUrl = "https://github.com/the-djmaze/snappymail/archive/refs/tags/v2.38.2.zip"
+    $snappyZip = "$env:TEMP\snappymail-2.38.2.zip"
+    $snappyPath = "C:\inetpub\snappymail"
+    $phpCgiPath = "C:\tools\php\php-cgi.exe"
+
+    # Eliminar instalación previa
+    if (Test-Path $snappyPath) {
+        Remove-Item -Recurse -Force $snappyPath
     }
 
-    Invoke-WebRequest $rainloopUrl -OutFile $rainloopZip
-    Expand-Archive -Path $rainloopZip -DestinationPath $rainloopPath -Force
-    Remove-Item $rainloopZip
+    # Descargar y extraer
+    Invoke-WebRequest -Uri $snappyUrl -OutFile $snappyZip -UseBasicParsing
+    Expand-Archive -Path $snappyZip -DestinationPath $snappyPath -Force
+    Remove-Item $snappyZip
 
     # Permisos
-    icacls $rainloopPath /grant "IIS_IUSRS:(OI)(CI)F" /T
-    icacls $rainloopPath /grant "Everyone:(OI)(CI)F" /T
+    icacls $snappyPath /grant "IIS_IUSRS:(OI)(CI)F" /T
+    icacls $snappyPath /grant "Everyone:(OI)(CI)F" /T
 
-    # Crear sitio en IIS
-    if (-not (Get-Website | Where-Object { $_.Name -eq "RainLoop" })) {
-        New-Website -Name "RainLoop" -Port 80 -PhysicalPath $rainloopPath -ApplicationPool "DefaultAppPool"
+    # Crear sitio IIS si no existe
+    if (-not (Get-Website | Where-Object { $_.Name -eq "SnappyMail" })) {
+        New-Website -Name "SnappyMail" -Port 80 -PhysicalPath $snappyPath -ApplicationPool "DefaultAppPool"
     }
 
-    # Crear web.config compatible con IIS y FastCGI
+    $appCmd = "$env:WinDir\System32\inetsrv\appcmd.exe"
+
+    # index.php como documento por defecto
+    & $appCmd set config "SnappyMail" /section:defaultDocument /+files.[value='index.php']
+
+    # Handler PHP
+    & $appCmd set config "SnappyMail" /section:system.webServer/handlers /+"[name='PHP_via_FastCGI',path='*.php',verb='GET,HEAD,POST',modules='FastCgiModule',scriptProcessor='$phpCgiPath',resourceType='Either']"
+
+    # web.config
     $webConfigContent = @"
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
@@ -403,35 +418,67 @@ function Instalar-RainLoop {
     </system.webServer>
 </configuration>
 "@
-    $webConfigPath = Join-Path $rainloopPath "web.config"
-    Set-Content -Path $webConfigPath -Value $webConfigContent -Encoding UTF8
+    Set-Content -Path "$snappyPath\web.config" -Value $webConfigContent -Encoding UTF8
 
-    Write-Host "RainLoop instalado y configurado en IIS correctamente."
+    Write-Host "SnappyMail instalado y configurado correctamente en IIS." -ForegroundColor Green
 }
 
-function Configurar-RainLoop {
+
+
+function Configurar-SnappyMail {
     param (
         [string]$domainName
     )
 
     $mailIP = Read-Host "Ingrese la IP del servidor de correo"
-    $configPath = "C:\inetpub\rainloop\data\_data_\_default_\domains\$domainName.ini"
+    $settingsPath = "C:\inetpub\snappymail\data\_data_\settings\settings.json"
 
-    $configContent = @"
-imap_host = $mailIP
-imap_port = 143
-imap_secure = none
-smtp_host = $mailIP
-smtp_port = 25
-smtp_secure = none
-smtp_auth = On
-white_list = 
-use_short_login = On
-"@
-    New-Item -ItemType Directory -Path (Split-Path $configPath) -Force
-    Set-Content -Path $configPath -Value $configContent -Encoding UTF8
-    Write-Host "Dominio $domainName configurado en RainLoop."
+    # Esperar hasta que settings.json exista (intentando abrir SnappyMail localmente)
+    $maxRetries = 10
+    $retry = 0
+    while (-Not (Test-Path $settingsPath) -and $retry -lt $maxRetries) {
+
+        try {
+            Invoke-WebRequest -Uri "http://localhost/?admin" -UseBasicParsing -TimeoutSec 5 | Out-Null
+        } catch {
+            # Ignorar errores (puerto cerrado, sin conexión, etc.)
+        }
+        Start-Sleep -Seconds 3
+        $retry++
+    }
+
+    if (-Not (Test-Path $settingsPath)) {
+        Write-Host "[ERROR] No se pudo encontrar settings.json. Asegúrate de que SnappyMail esté instalado correctamente." -ForegroundColor Red
+        return
+    }
+
+    # Leer y modificar el archivo JSON
+    $json = Get-Content $settingsPath -Raw | ConvertFrom-Json
+
+    if (-Not $json.domains) {
+        $json | Add-Member -MemberType NoteProperty -Name domains -Value @{}
+    }
+
+    $json.domains.$domainName = @{
+        imap = @{
+            host = $mailIP
+            port = 143
+            secure = "None"
+            short_login = $true
+        }
+        smtp = @{
+            host = $mailIP
+            port = 25
+            secure = "None"
+            auth = $true
+        }
+    }
+
+    # Guardar los cambios
+    $json | ConvertTo-Json -Depth 10 | Set-Content -Path $settingsPath -Encoding UTF8
+    Write-Host "Dominio $domainName configurado en SnappyMail." -ForegroundColor Green
 }
+
 
 function Instalar-hMailServer {
     $hmailUrl = "https://www.hmailserver.com/files/hMailServer-5.6.7-B2425.exe"
@@ -502,10 +549,11 @@ Instalar-NET35
 Instalar-IIS
 Instalar-Chocolatey
 Instalar-PHP
-Instalar-RainLoop
+Instalar-SnappyMail
 Instalar-hMailServer
 Configurar-Dominio-hMail -Dominio $domain -AdminPass $adminPassword
-Configurar-RainLoop -domainName $domain
+Configurar-SnappyMail -domainName $domain
+
 
 # Configurar reglas de firewall
 New-NetFirewallRule -DisplayName "SMTP (25)" -Direction Inbound -Protocol TCP -LocalPort 25 -Action Allow

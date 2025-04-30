@@ -870,4 +870,37 @@ extension=zip
     </system.webServer>
 </configuration>
 & "C:\ProgramData\chocolatey\bin\choco.exe" install php --version=8.2 ...
+<?php phpinfo(); ?>
+
+Import-Module WebAdministration
+
+# Agrega FastCGI
+Set-WebConfiguration "//fastCgi/application" -Value @{
+    fullPath="C:\inetpub\php\php-cgi.exe";
+    arguments="";
+} -PSPath "IIS:\"
+
+# Agrega el mapeo del handler para .php
+Add-WebConfiguration "/system.webServer/handlers" -Value @{
+    name = "PHP_via_FastCGI";
+    path = "*.php";
+    verb = "GET,HEAD,POST";
+    modules = "FastCgiModule";
+    scriptProcessor = "C:\inetpub\php\php-cgi.exe";
+    resourceType = "Either";
+    requireAccess = "Script";
+} -PSPath "IIS:\"
+
+$acl = Get-Acl "C:\inetpub\wwwroot\rainloop"
+$rule = New-Object System.Security.AccessControl.FileSystemAccessRule("IIS_IUSRS","Read,ReadAndExecute,ListDirectory", "ContainerInherit,ObjectInherit", "None", "Allow")
+$acl.AddAccessRule($rule)
+Set-Acl "C:\inetpub\wwwroot\rainloop" $acl
+
+display_errors = On
+log_errors = On
+error_log = "C:\inetpub\php\php_errors.log"
+
+Import-Module WebAdministration
+Get-WebApplication | Where-Object { $_.Path -eq "/rainloop" }
+
 
