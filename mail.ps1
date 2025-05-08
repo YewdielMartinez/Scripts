@@ -33,22 +33,6 @@ function Instalar-Chocolatey {
         Write-Host "🍫 Chocolatey ya está instalado." -ForegroundColor Yellow
     }
 }
-
-
-function Conectar-hMail {
-    param([string]$adminPassword)
-
-    try {
-        $hMail = New-Object -ComObject "hMailServer.Application"
-        $hMail.Authenticate("Administrator", $adminPassword)
-        return $hMail
-    } catch {
-        Write-Host "[ERROR] No se pudo conectar a hMailServer. Verifica la contraseña." -ForegroundColor Red
-        return $null
-    }
-}
-
-
 function Validar-Usuario($usuario) {
     if ($usuario -match '^[a-z_][a-z0-9_-]{2,15}$') {
         return $true
@@ -69,123 +53,7 @@ function Validar-Password($password) {
         return $false
     }
 }
-function Agregar-Usuario {
-    param (
-        [string]$domain,
-        [string]$adminPassword
-    )
 
-    $hMail = Conectar-hMail -adminPassword $adminPassword
-if (-not $hMail) { return }
-
-$dominioObj = $hMail.Domains.ItemByName($domain)
-if (-not $dominioObj) {
-    Write-Host "[ERROR] El dominio $domain no existe en hMailServer." -ForegroundColor Red
-    return
-}
-
-    $dominioObj = $hMail.Domains.ItemByName($domain)
-
-    do {
-        $usuario = Read-Host "Ingrese el nombre del usuario (sin @$domain)"
-    } while (-not (Validar-Usuario $usuario))
-
-    do {
-        $password = Read-Host "Ingrese la contraseña del usuario" -AsSecureString
-        $passwordPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
-            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)
-        )
-    } while (-not (Validar-Password $passwordPlain))
-
-    # Revisar si ya existe
-    $correo = "$usuario@$domain"
-    $existe = $false
-    foreach ($cuenta in $dominioObj.Accounts) {
-        if ($cuenta.Address -eq $correo) { $existe = $true; break }
-    }
-
-    if ($existe) {
-        Write-Host "[!] La cuenta $correo ya existe." -ForegroundColor Yellow
-    } else {
-        $cuenta = $dominioObj.Accounts.Add()
-        $cuenta.Address = $correo
-        $cuenta.Password = $passwordPlain
-        $cuenta.Active = $true
-        $cuenta.Save()
-        Write-Host "[+] Cuenta $correo creada en hMailServer." -ForegroundColor Green
-    }
-}
-
-function Listar-Usuarios {
-    param (
-        [string]$domain,
-        [string]$adminPassword
-    )
-
-    $hMail = Conectar-hMail -adminPassword $adminPassword
-    $dominioObj = $hMail.Domains.ItemByName($domain)
-
-    Write-Host "Cuentas de correo en $domain :`n" -ForegroundColor Cyan
-    foreach ($cuenta in $dominioObj.Accounts) {
-        Write-Host "- $($cuenta.Address)"
-    }
-}
-
-
-function Eliminar-Usuario {
-    param (
-        [string]$domain,
-        [string]$adminPassword
-    )
-
-    $correo = Read-Host "Ingrese la cuenta de correo a eliminar (sin @$domain)"
-    $correoCompleto = "$correo@$domain"
-
-    $hMail = Conectar-hMail -adminPassword $adminPassword
-    $dominioObj = $hMail.Domains.ItemByName($domain)
-
-    $found = $false
-    for ($i = 0; $i -lt $dominioObj.Accounts.Count; $i++) {
-        $cuenta = $dominioObj.Accounts.Item($i)
-        if ($cuenta.Address -eq $correoCompleto) {
-            $cuenta.Delete()
-            Write-Host "[+] Cuenta $correoCompleto eliminada correctamente." -ForegroundColor Green
-            $found = $true
-            break
-        }
-    }
-
-    if (-not $found) {
-        Write-Host "[-] No se encontró la cuenta $correoCompleto." -ForegroundColor Yellow
-    }
-}
-
-function Verificar-Usuario {
-    param (
-        [string]$domain,
-        [string]$adminPassword
-    )
-
-    $correo = Read-Host "Ingrese el nombre del usuario (sin @$domain)"
-    $correoCompleto = "$correo@$domain"
-
-    $hMail = Conectar-hMail -adminPassword $adminPassword
-    $dominioObj = $hMail.Domains.ItemByName($domain)
-
-    $existe = $false
-    foreach ($cuenta in $dominioObj.Accounts) {
-        if ($cuenta.Address -eq $correoCompleto) {
-            $existe = $true
-            break
-        }
-    }
-
-    if ($existe) {
-        Write-Host "[+] El usuario $correoCompleto existe." -ForegroundColor Green
-    } else {
-        Write-Host "[-] El usuario $correoCompleto no existe." -ForegroundColor Yellow
-    }
-}
 
 Function Install-DNS {
     Write-Host "Instalando servicio DNS..."
@@ -239,7 +107,187 @@ Function Enable-FirewallRules {
         Set-NetFirewallRule -DisplayName $rule -Enabled True -ErrorAction SilentlyContinue
     }
 }
+function Conectar-hMail {
+    param([string]$adminPassword)
 
+    try {
+        $hMail = New-Object -ComObject "hMailServer.Application"
+        $hMail.Authenticate("Administrator", $adminPassword)
+        return $hMail
+    } catch {
+        Write-Host "[ERROR] No se pudo conectar a hMailServer. Verifica la contraseña." -ForegroundColor Red
+        return $null
+    }
+}
+
+function Agregar-Usuario {
+    param (
+        [string]$domain,
+        [string]$adminPassword
+    )
+
+    $username = Read-Host "Ingrese el nombre del nuevo usuario (solo la parte antes de @)"
+    $password = Read-Host "Ingrese la contraseña para $username@$domain"
+
+    $script = @"
+Dim app, i, dominio, cuenta
+Set app = CreateObject("hMailServer.Application")
+Call app.Authenticate("Administrator", "$adminPassword")
+
+Set dominio = Nothing
+For i = 0 To app.Domains.Count - 1
+    If LCase(app.Domains.Item(i).Name) = LCase("$domain") Then
+        Set dominio = app.Domains.Item(i)
+        Exit For
+    End If
+Next
+
+If dominio Is Nothing Then
+    WScript.Echo "Dominio '$domain' no encontrado."
+    WScript.Quit
+End If
+
+Set cuenta = dominio.Accounts.Add()
+cuenta.Address = "$username@$domain"
+cuenta.Password = "$password"
+cuenta.Active = True
+cuenta.Save
+
+WScript.Echo "Usuario $username@$domain agregado correctamente."
+"@
+
+    $vbsPath = "$env:TEMP\agregar_usuario.vbs"
+    Set-Content -Path $vbsPath -Value $script -Encoding ASCII
+    cscript //nologo $vbsPath
+}
+
+function Listar-Usuarios {
+    param (
+        [string]$domain,
+        [string]$adminPassword
+    )
+
+    $script = @"
+Dim app, i, j, dominio
+Set app = CreateObject("hMailServer.Application")
+Call app.Authenticate("Administrator", "$adminPassword")
+
+Set dominio = Nothing
+For i = 0 To app.Domains.Count - 1
+    If LCase(app.Domains.Item(i).Name) = LCase("$domain") Then
+        Set dominio = app.Domains.Item(i)
+        Exit For
+    End If
+Next
+
+If dominio Is Nothing Then
+    WScript.Echo "Dominio '$domain' no encontrado."
+    WScript.Quit
+End If
+
+If dominio.Accounts.Count = 0 Then
+    WScript.Echo "No hay usuarios registrados en el dominio '$domain'."
+Else
+    WScript.Echo "Usuarios en el dominio '$domain':"
+    For j = 0 To dominio.Accounts.Count - 1
+        WScript.Echo "- " & dominio.Accounts.Item(j).Address
+    Next
+End If
+"@
+
+    $vbsPath = "$env:TEMP\listar_usuarios.vbs"
+    Set-Content -Path $vbsPath -Value $script -Encoding ASCII
+    cscript //nologo $vbsPath
+}
+
+
+function Eliminar-Usuario {
+    param (
+        [string]$domain,
+        [string]$adminPassword
+    )
+
+    $username = Read-Host "Ingrese el nombre del usuario a eliminar (solo la parte antes de @)"
+
+    $script = @"
+Dim app, i, j, dominio, cuenta
+Set app = CreateObject("hMailServer.Application")
+Call app.Authenticate("Administrator", "$adminPassword")
+
+Set dominio = Nothing
+For i = 0 To app.Domains.Count - 1
+    If LCase(app.Domains.Item(i).Name) = LCase("$domain") Then
+        Set dominio = app.Domains.Item(i)
+        Exit For
+    End If
+Next
+
+If dominio Is Nothing Then
+    WScript.Echo "Dominio '$domain' no encontrado."
+    WScript.Quit
+End If
+
+For j = 0 To dominio.Accounts.Count - 1
+    If LCase(dominio.Accounts.Item(j).Address) = LCase("$username@$domain") Then
+        dominio.Accounts.Item(j).Delete
+        WScript.Echo "Usuario eliminado correctamente: $username@$domain"
+        WScript.Quit
+    End If
+Next
+
+WScript.Echo "El usuario $username@$domain no existe."
+"@
+
+    $vbsPath = "$env:TEMP\eliminar_usuario.vbs"
+    Set-Content -Path $vbsPath -Value $script -Encoding ASCII
+    cscript //nologo $vbsPath
+}
+
+function Verificar-Usuario {
+    param (
+        [string]$domain,
+        [string]$adminPassword
+    )
+
+    $username = Read-Host "Ingrese el usuario a verificar (sin @dominio)"
+
+    $script = @"
+Dim app, i, j, dominio, encontrado
+Set app = CreateObject("hMailServer.Application")
+Call app.Authenticate("Administrator", "$adminPassword")
+
+Set dominio = Nothing
+For i = 0 To app.Domains.Count - 1
+    If LCase(app.Domains.Item(i).Name) = LCase("$domain") Then
+        Set dominio = app.Domains.Item(i)
+        Exit For
+    End If
+Next
+
+If dominio Is Nothing Then
+    WScript.Echo "Dominio '$domain' no encontrado."
+    WScript.Quit
+End If
+
+encontrado = False
+For j = 0 To dominio.Accounts.Count - 1
+    If LCase(dominio.Accounts.Item(j).Address) = LCase("$username@$domain") Then
+        encontrado = True
+        Exit For
+    End If
+Next
+
+If encontrado Then
+    WScript.Echo "El usuario $username@$domain SÍ existe."
+Else
+    WScript.Echo "El usuario $username@$domain NO existe."
+End If
+"@
+
+    $vbsPath = "$env:TEMP\verificar_usuario.vbs"
+    Set-Content -Path $vbsPath -Value $script -Encoding ASCII
+    cscript //nologo $vbsPath
+}
 
 
 function Crear-Cuenta-hMail {
@@ -283,6 +331,18 @@ account.Save
     Set-Content -Path $vbsPath -Value $script -Encoding ASCII
     cscript //nologo $vbsPath
 }
+function Instalar-hMailServer {
+    $hmailUrl = "https://www.hmailserver.com/files/hMailServer-5.6.7-B2425.exe"
+    $hmailInstaller = "$env:TEMP\hmailserver.exe"
+    Write-Host "Descargando hMailServer..."
+    Invoke-WebRequest $hmailUrl -OutFile $hmailInstaller
+
+    Write-Host "Instalando hMailServer en modo silencioso..."
+    Start-Process -FilePath $hmailInstaller -ArgumentList "/SILENT" -Wait
+    Start-Sleep -Seconds 5
+    Write-Host "hMailServer instalado silenciosamente."
+}
+
 function Instalar-NET35 { 
     Write-Host "Instalando .NET Framework 3.5..."
     Add-WindowsFeature NET-Framework-Core -ErrorAction SilentlyContinue
@@ -292,192 +352,116 @@ function Instalar-NET35 {
         Write-Host "ERROR al instalar .NET Framework 3.5."
     }
 }
+function Instalar-XAMPP {
+    #Seccion de instalacion de XAMPP
+    New-Item -Path "C:\Installers" -ItemType Directory -Force | Out-Null
 
-function Instalar-IIS {
-    Write-Host "Instalando IIS y componentes necesarios..."
-    Install-WindowsFeature -Name Web-Server, Web-WebServer, Web-Common-Http, Web-Default-Doc, Web-Static-Content, Web-ISAPI-Ext, Web-ISAPI-Filter, Web-Mgmt-Console, Web-Scripting-Tools, Web-Http-Errors, Web-CGI -IncludeManagementTools
-    Write-Host "IIS instalado correctamente."
+    # Descargar XAMPP (asegurate de tener curl en PowerShell v5+)
+    $xamppUrl = "https://sourceforge.net/projects/xampp/files/XAMPP%20Windows/8.2.12/xampp-windows-x64-8.2.12-0-VS16-installer.exe/download"
+    $outputPath = "C:\Installers\xampp-installer.exe"
+
+
+    curl.exe -L $xamppUrl -o $outputPath
+
+    # Ejecutar el instalador de XAMPP
+    cd "C:\Installers"
+    Start-Process -FilePath .\xampp-installer.exe
+    Write-Host "XAMPP instalado correctamente." -ForegroundColor Green
+    Write-Host "Iniciando XAMPP..." -ForegroundColor Cyan   
+
 }
+
 function Instalar-PHP {
-    $phpInstallPath = "C:\tools\php"  # Donde Chocolatey instala PHP
-    $phpVersionZip = "7.4.33"
-    $phpZipUrl = "https://windows.php.net/downloads/releases/php-7.4.33-Win32-vc15-x64.zip"
-    $tempZipPath = "$env:TEMP\php.zip"
+    $phpInstallPath = "C:\xampp\php"
 
-    Write-Host "🍫 Instalando PHP 8.2 con Chocolatey..." -ForegroundColor Cyan
-    choco install php --version=8.2 --params '"/InstallDir:C:\tools\php"' -y
-
-    if (-Not (Test-Path $phpInstallPath)) {
-        Write-Host "[ERROR] La instalación de PHP 8.2 con Chocolatey falló." -ForegroundColor Red
+    if (-Not (Test-Path "$phpInstallPath\php.exe")) {
+        Write-Host "[ERROR] No se encontró PHP en XAMPP. Asegúrese de que XAMPP esté instalado correctamente." -ForegroundColor Red
         return
     }
 
-    Get-ChildItem -Path $phpInstallPath -Recurse -Force | Remove-Item -Recurse -Force
-
-
-    Invoke-WebRequest -Uri $phpZipUrl -OutFile $tempZipPath -UseBasicParsing
-
-
-    Expand-Archive -Path $tempZipPath -DestinationPath $phpInstallPath -Force
-    Remove-Item $tempZipPath
-
-    # Configurar php.ini si existe php.ini-production
-    $iniProdPath = Join-Path $phpInstallPath "php.ini-development"
-    $iniPath = Join-Path $phpInstallPath "php.ini"
-    if (Test-Path $iniProdPath) {
-        Write-Host "⚙️ Configurando php.ini..." -ForegroundColor Cyan
-        Copy-Item $iniProdPath $iniPath -Force
-        (Get-Content $iniPath) | ForEach-Object {
-            $_ -replace ';extension_dir = "ext"', 'extension_dir = "ext"' `
-               -replace ';extension=mbstring', 'extension=mbstring' `
-               -replace ';extension=openssl', 'extension=openssl' `
-               -replace ';extension=curl', 'extension=curl' `
-               -replace ';date.timezone =', 'date.timezone = "America/Mexico_City"'
-        } | Set-Content $iniPath -Encoding ASCII
-    } else {
-        Write-Host "[ERROR] No se encontró php.ini-production." -ForegroundColor Red
-        return
+    # Agregar PHP al PATH del sistema si no está
+    $currentPath = [Environment]::GetEnvironmentVariable("Path", [System.EnvironmentVariableTarget]::Machine)
+    if ($currentPath -notlike "*$phpInstallPath*") {
+        [Environment]::SetEnvironmentVariable("Path", "$currentPath;$phpInstallPath", [System.EnvironmentVariableTarget]::Machine)
     }
 
-    # Registrar FastCGI en IIS
-    $phpCgiPath = Join-Path $phpInstallPath "php-cgi.exe"
-    $appCmd = "$env:WinDir\System32\inetsrv\appcmd.exe"
-
-    Write-Host "🧩 Registrando PHP en IIS como FastCGI..." -ForegroundColor Cyan
-    & $appCmd set config /section:system.webServer/fastCgi /+"[fullPath='$phpCgiPath']"
-
-    Write-Host "📄 Registrando handler para PHP (*.php)..." -ForegroundColor Cyan
-    & $appCmd set config /section:system.webServer/handlers /+"[name='PHP_via_FastCGI',path='*.php',verb='GET,HEAD,POST',modules='FastCgiModule',scriptProcessor='$phpCgiPath',resourceType='Either']"
-
-    Write-Host "📃 Estableciendo index.php como documento por defecto..." 
-    & $appCmd set config /section:defaultDocument /+files.[value='index.php']
-
-    Write-Host "🔁 Reiniciando IIS..." 
-    iisreset
-
-    Write-Host "✅ PHP $phpVersionZip instalado correctamente desde ZIP." 
-
-
-    
+    Write-Host "PHP (XAMPP) registrado en PATH correctamente." -ForegroundColor Green
 }
 
 
-function Instalar-SnappyMail {
-    Write-Host "Instalando SnappyMail..." -ForegroundColor Cyan
-    $snappyUrl = "https://github.com/the-djmaze/snappymail/archive/refs/tags/v2.38.2.zip"
-    $snappyZip = "$env:TEMP\snappymail-2.38.2.zip"
-    $snappyPath = "C:\inetpub\snappymail"
-    $phpCgiPath = "C:\tools\php\php-cgi.exe"
+function Instalar-AfterLogic {
+    Write-Host "Instalando AfterLogic WebMail Lite..." -ForegroundColor Cyan
 
-    # Eliminar instalación previa
-    if (Test-Path $snappyPath) {
-        Remove-Item -Recurse -Force $snappyPath
+    $afterlogicUrl = "https://afterlogic.org/download/webmail_php.zip"
+    $afterlogicZip = "$env:TEMP\webmail-lite.zip"
+    $afterlogicPath = "C:\xampp\htdocs\webmail"
+
+    # Eliminar carpeta webmail si ya existe
+    if (Test-Path $afterlogicPath) {
+        Remove-Item $afterlogicPath -Recurse -Force
     }
 
-    # Descargar y extraer
-    Invoke-WebRequest -Uri $snappyUrl -OutFile $snappyZip -UseBasicParsing
-    Expand-Archive -Path $snappyZip -DestinationPath $snappyPath -Force
-    Remove-Item $snappyZip
+    # Descargar archivo ZIP
+    Invoke-WebRequest -Uri $afterlogicUrl -OutFile $afterlogicZip
 
-    # Permisos
-    icacls $snappyPath /grant "IIS_IUSRS:(OI)(CI)F" /T
-    icacls $snappyPath /grant "Everyone:(OI)(CI)F" /T
+    # Crear carpeta destino
+    New-Item -ItemType Directory -Path $afterlogicPath -Force | Out-Null
 
-    # Crear sitio IIS si no existe
-    if (-not (Get-Website | Where-Object { $_.Name -eq "SnappyMail" })) {
-        New-Website -Name "SnappyMail" -Port 80 -PhysicalPath $snappyPath -ApplicationPool "DefaultAppPool"
-    }
+    # Extraer contenido directamente en la carpeta deseada
+    Expand-Archive -Path $afterlogicZip -DestinationPath $afterlogicPath -Force
 
-    $appCmd = "$env:WinDir\System32\inetsrv\appcmd.exe"
+    # Eliminar ZIP descargado
+    Remove-Item $afterlogicZip
 
-    # index.php como documento por defecto
-    & $appCmd set config "SnappyMail" /section:defaultDocument /+files.[value='index.php']
-
-    # Handler PHP
-    & $appCmd set config "SnappyMail" /section:system.webServer/handlers /+"[name='PHP_via_FastCGI',path='*.php',verb='GET,HEAD,POST',modules='FastCgiModule',scriptProcessor='$phpCgiPath',resourceType='Either']"
-
-    # web.config
-    $webConfigContent = @"
-<?xml version="1.0" encoding="UTF-8"?>
-<configuration>
-    <system.webServer>
-        <defaultDocument>
-            <files>
-                <add value="index.php" />
-            </files>
-        </defaultDocument>
-        <handlers>
-            <add name="PHP_via_FastCGI"
-                 path="*.php"
-                 verb="GET,HEAD,POST"
-                 modules="FastCgiModule"
-                 scriptProcessor="$phpCgiPath"
-                 resourceType="Either"
-                 requireAccess="Script" />
-        </handlers>
-    </system.webServer>
-</configuration>
-"@
-    Set-Content -Path "$snappyPath\web.config" -Value $webConfigContent -Encoding UTF8
-
-    Write-Host "SnappyMail instalado y configurado correctamente en IIS." -ForegroundColor Green
+    Write-Host "AfterLogic WebMail Lite instalado en $afterlogicPath" -ForegroundColor Green
 }
 
 
-
-function Configurar-SnappyMail {
+function Configurar-AfterLogic {
     param (
         [string]$domainName
     )
 
-    $mailIP = Read-Host "Ingrese la IP del servidor de correo"
-    $settingsPath = "C:\inetpub\snappymail\data\_data_\settings\settings.json"
+    Write-Host "Para configurar AfterLogic WebMail Lite, abra en su navegador:" -ForegroundColor Yellow
+    Write-Host "http://localhost/webmail/adminpanel/" -ForegroundColor Green
+    Write-Host "Usuario por defecto: superadmin" -ForegroundColor Green
+    Write-Host "Contraseña por defecto: superadmin" -ForegroundColor Green
+    Write-Host "`nDesde allí puede configurar IMAP y SMTP para el dominio $domainName." -ForegroundColor Cyan
+}
 
-    # Esperar hasta que settings.json exista (intentando abrir SnappyMail localmente)
-    $maxRetries = 10
-    $retry = 0
-    while (-Not (Test-Path $settingsPath) -and $retry -lt $maxRetries) {
+function Configurar-PHP {
+    $phpIniPath = "C:\xampp\php\php.ini"
 
-        try {
-            Invoke-WebRequest -Uri "http://localhost/?admin" -UseBasicParsing -TimeoutSec 5 | Out-Null
-        } catch {
-            # Ignorar errores (puerto cerrado, sin conexión, etc.)
-        }
-        Start-Sleep -Seconds 3
-        $retry++
-    }
-
-    if (-Not (Test-Path $settingsPath)) {
-        Write-Host "[ERROR] No se pudo encontrar settings.json. Asegúrate de que SnappyMail esté instalado correctamente." -ForegroundColor Red
+    if (-Not (Test-Path $phpIniPath)) {
+        Write-Host "[ERROR] No se encontró php.ini en $phpIniPath" -ForegroundColor Red
         return
     }
 
-    # Leer y modificar el archivo JSON
-    $json = Get-Content $settingsPath -Raw | ConvertFrom-Json
+    Write-Host "Configurando php.ini..." -ForegroundColor Cyan
+    $contenido = Get-Content $phpIniPath
 
-    if (-Not $json.domains) {
-        $json | Add-Member -MemberType NoteProperty -Name domains -Value @{}
+    $cambios = @{
+        ";extension=mbstring" = "extension=mbstring"
+        ";extension=openssl" = "extension=openssl"
+        ";extension=imap"    = "extension=imap"
+        ";extension=zip"     = "extension=zip"
+        ";extension=pdo_mysql" = "extension=pdo_mysql"
+        "upload_max_filesize = 2M" = "upload_max_filesize = 20M"
+        "post_max_size = 8M"       = "post_max_size = 40M"
+        "memory_limit = 128M"      = "memory_limit = 256M"
+        "max_execution_time = 30"  = "max_execution_time = 300"
     }
 
-    $json.domains.$domainName = @{
-        imap = @{
-            host = $mailIP
-            port = 143
-            secure = "None"
-            short_login = $true
-        }
-        smtp = @{
-            host = $mailIP
-            port = 25
-            secure = "None"
-            auth = $true
-        }
+    foreach ($clave in $cambios.Keys) {
+        $valor = $cambios[$clave]
+        $contenido = $contenido -replace [regex]::Escape($clave), $valor
     }
 
-    # Guardar los cambios
-    $json | ConvertTo-Json -Depth 10 | Set-Content -Path $settingsPath -Encoding UTF8
-    Write-Host "Dominio $domainName configurado en SnappyMail." -ForegroundColor Green
+    $contenido | Set-Content -Path $phpIniPath -Encoding UTF8
+    Write-Host "php.ini configurado correctamente." -ForegroundColor Green
 }
+
+
 
 
 function Instalar-hMailServer {
@@ -491,7 +475,6 @@ function Instalar-hMailServer {
     Start-Sleep -Seconds 5
     Write-Host "hMailServer instalado silenciosamente."
 }
-
 function Configurar-Dominio-hMail {
     param(
         [string]$Dominio,
@@ -499,31 +482,34 @@ function Configurar-Dominio-hMail {
     )
 
     $script = @"
-Dim app
+Dim app, domain, existingDomain
 Set app = CreateObject("hMailServer.Application")
 Call app.Authenticate("Administrator", "$AdminPass")
 
+' Verificar si el dominio ya existe
+Dim i
+For i = 0 To app.Domains.Count - 1
+    If LCase(app.Domains.Item(i).Name) = LCase("$Dominio") Then
+        WScript.Echo "El dominio '$Dominio' ya está configurado."
+        WScript.Quit
+    End If
+Next
+
 ' Crear dominio
-Dim domain
 Set domain = app.Domains.Add()
 domain.Name = "$Dominio"
 domain.Active = True
 domain.Save
 
-' Configurar SMTP
-domain.SMTPRelayer = ""
-domain.SMTPRelayerRequiresAuth = False
-domain.SMTPRelayerUseSSL = False
-domain.Save
-
-' Crear cuentas por defecto
-Dim account
+' Crear cuenta de administrador
 Set account = domain.Accounts.Add()
 account.Address = "admin@$Dominio"
 account.Password = "Admin123"
 account.Active = True
 account.MaxSize = 100
 account.Save
+
+WScript.Echo "Dominio '$Dominio' y cuenta admin@$Dominio configurados correctamente."
 "@
 
     $vbsPath = "$env:TEMP\configurar_hmail.vbs"
@@ -531,54 +517,117 @@ account.Save
     cscript //nologo $vbsPath
 }
 
-# Asumiendo que tienes definidas funciones Install-DNS, Create-DNSZone, Create-DNSRecords
-Install-DNS
-$domain = Read-Host "Ingrese el dominio del correo (ej. midominio.com)"
-$ipAddress = Read-Host "Ingrese la IP del servidor ($domain)"
-if (-not [System.Net.IPAddress]::TryParse($ipAddress, [ref]$null)) {
-    Write-Host "La IP ingresada no es válida. Intente nuevamente."
-    break
+function Mostrar-MenuUsuarios {
+    param (
+        [string]$domain,
+        [string]$adminPassword,
+        [string]$ipAddress
+    )
+
+    do {
+        Write-Host "`n----- MENÚ DE USUARIOS DE CORREO -----"
+        Write-Host "Dominio actual: $domain"
+        Write-Host "Contraseña de administrador: $adminPassword"
+        Write-Host "IP del servidor: $ipAddress"
+        Write-Host "Acceso a AfterLogic WebMail: http://localhost/webmail"
+        Write-Host "Acceso a AfterLogic Admin: http://localhost/webmail/adminpanel"
+        Write-Host "-------------------------------------"
+        Write-Host "1. Agregar usuario de correo"
+        Write-Host "2. Eliminar usuario de correo"
+        Write-Host "3. Listar usuarios de correo"
+        Write-Host "4. Verificar si un usuario existe"
+        Write-Host "5. Configurar nuevo dominio"
+        Write-Host "6. Salir"
+
+        $opcion = Read-Host "Seleccione una opción"
+
+        switch ($opcion) {
+            1 { Agregar-Usuario -domain $domain -adminPassword $adminPassword }
+            2 { Eliminar-Usuario -domain $domain -adminPassword $adminPassword }
+            3 { Listar-Usuarios -domain $domain -adminPassword $adminPassword }
+            4 { Verificar-Usuario -domain $domain -adminPassword $adminPassword }
+            5 {
+                $nuevoDominio = Read-Host "Ingrese el nuevo dominio"
+                Configurar-Dominio-hMail -Dominio $nuevoDominio -AdminPass $adminPassword
+                $domain = $nuevoDominio  # Actualiza la variable local
+            }
+            6 { Write-Host "Saliendo..."; break }
+            default { Write-Host "Opción inválida" -ForegroundColor Red }
+        }
+    } while ($true)
 }
 
-Create-DNSZone -Domain $domain
-Create-DNSRecords -Domain $domain -IpAddress $ipAddress
-
-$adminPassword = Read-Host "Ingrese la contraseña del administrador de hMailServer"
-
-Instalar-NET35
-Instalar-IIS
-Instalar-Chocolatey
-Instalar-PHP
-Instalar-SnappyMail
-Instalar-hMailServer
-Configurar-Dominio-hMail -Dominio $domain -AdminPass $adminPassword
-Configurar-SnappyMail -domainName $domain
-
-
-# Configurar reglas de firewall
-New-NetFirewallRule -DisplayName "SMTP (25)" -Direction Inbound -Protocol TCP -LocalPort 25 -Action Allow
-New-NetFirewallRule -DisplayName "IMAP (143)" -Direction Inbound -Protocol TCP -LocalPort 143 -Action Allow
-New-NetFirewallRule -DisplayName "POP3 (110)" -Direction Inbound -Protocol TCP -LocalPort 110 -Action Allow
-Set-ItemProperty "IIS:\Sites\RainLoop" -Name bindings -Value @{protocol="http"; bindingInformation="*:80:$domain"}
-
-Write-Host "Instalación completada. Accede a http://$domain para usar RainLoop."
-
+# Menú principal
 do {
-    Write-Host "`n----- MENÚ -----"
-    Write-Host "1. Agregar usuario de correo"
-    Write-Host "2. Eliminar usuario de correo"
-    Write-Host "3. Listar usuarios de correo"
-    Write-Host "4. Verificar si un usuario existe"
-    Write-Host "5. Salir"
+    Write-Host "`n----- MENÚ PRINCIPAL DEL SERVIDOR DE CORREO -----"
+    Write-Host "1. Instalar y configurar DNS"
+    Write-Host "2. Instalar .NET Framework 3.5"
+    Write-Host "3. Instalar Chocolatey"
+    Write-Host "4. Instalar hMailServer"
+    Write-Host "5. Configurar dominio en hMailServer"
+    Write-Host "6. Configurar reglas de firewall (SMTP, IMAP, POP3)"
+    Write-Host "7. Instalar XAMPP"
+    Write-Host "8. Instalar PHP"
+    Write-Host "9. Instalar AfterLogic WebMail Lite"
+    Write-Host "10. Configurar AfterLogic"
+    Write-Host "11. Configurar php.ini"
+    Write-Host "12. Salir al menú de usuarios"
 
     $opcion = Read-Host "Seleccione una opción"
 
     switch ($opcion) {
-        1 { Agregar-Usuario -domain $domain -adminPassword $adminPassword }
-        2 { Eliminar-Usuario -domain $domain -adminPassword $adminPassword }
-        3 { Listar-Usuarios -domain $domain -adminPassword $adminPassword }
-        4 { Verificar-Usuario -domain $domain -adminPassword $adminPassword }
-        5 { Write-Host "Saliendo..."; break }
-        default { Write-Host "Opción inválida" -ForegroundColor Red }
+        1 {
+            Install-DNS
+            $global:domain = Read-Host "Ingrese el dominio del correo (ej. midominio.com)"
+            $global:ipAddress = Read-Host "Ingrese la IP del servidor ($global:domain)"
+            if (-not [System.Net.IPAddress]::TryParse($global:ipAddress, [ref]$null)) {
+                Write-Host "La IP ingresada no es válida. Intente nuevamente." -ForegroundColor Red
+                continue
+            }
+            Create-DNSZone -Domain $global:domain
+            Create-DNSRecords -Domain $global:domain -IpAddress $global:ipAddress
+        }
+        2 { Instalar-NET35 }
+        3 { Instalar-Chocolatey }
+        4 { Instalar-hMailServer }
+        5 {
+            if (-not $global:domain) {
+                $global:domain = Read-Host "Ingrese el dominio del correo"
+            }
+            $global:adminPassword = Read-Host "Ingrese la contraseña del administrador de hMailServer"
+            Configurar-Dominio-hMail -Dominio $global:domain -AdminPass $global:adminPassword
+        }
+        6 {
+            New-NetFirewallRule -DisplayName "SMTP (25)" -Direction Inbound -Protocol TCP -LocalPort 25 -Action Allow
+            New-NetFirewallRule -DisplayName "IMAP (143)" -Direction Inbound -Protocol TCP -LocalPort 143 -Action Allow
+            New-NetFirewallRule -DisplayName "POP3 (110)" -Direction Inbound -Protocol TCP -LocalPort 110 -Action Allow
+            Write-Host "Reglas de firewall configuradas." -ForegroundColor Green
+        }
+        7 { Instalar-XAMPP }
+        8 { Instalar-PHP }
+        9 { Instalar-AfterLogic }
+        10 {
+            if (-not $global:domain) {
+                $global:domain = Read-Host "Ingrese el dominio del correo"
+            }
+            Configurar-AfterLogic -domainName $global:domain
+        }
+        11 { Configurar-PHP }
+        12 {
+            if (-not $global:domain) {
+                $global:domain = Read-Host "Ingrese el dominio del correo"
+            }
+            if (-not $global:adminPassword) {
+                $global:adminPassword = Read-Host "Ingrese la contraseña del administrador de hMailServer"
+            }
+            if (-not $global:ipAddress) {
+                $global:ipAddress = Read-Host "Ingrese la IP del servidor ($global:domain)"
+            }
+
+            # Llamada con variables correctas
+            Mostrar-MenuUsuarios -domain $global:domain -adminPassword $global:adminPassword -ipAddress $global:ipAddress
+            break
+        }
+        default { Write-Host "Opción inválida." -ForegroundColor Red }
     }
 } while ($true)

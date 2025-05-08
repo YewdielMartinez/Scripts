@@ -904,3 +904,37 @@ Import-Module WebAdministration
 Get-WebApplication | Where-Object { $_.Path -eq "/rainloop" }
 
 
+        imap = @{
+            host = $mailIP
+            port = 143
+            secure = "None"
+            short_login = $true
+        }
+        smtp = @{
+            host = $mailIP
+            port = 25
+            secure = "None"
+            auth = $true
+        }
+extension_dir = "ext"
+extension=mbstring
+extension=zlib
+extension=json
+extension=libxml
+extension=dom
+extension=curl
+extension=exif
+extension=fileinfo
+extension=gd              ; o usa una de las siguientes alternativas si las prefieres
+extension=gnupg
+extension=iconv
+extension=intl
+extension=ldap
+extension=openssl
+extension=pdo
+extension=pdo_mysql       ; o usa pdo_pgsql o pdo_sqlite si aplican
+extension=redis
+extension=sodium
+extension=tidy
+extension=zip
+New-WebHandler -Path "*.php" -Verb "*" -ScriptProcessor "C:\tools\php82\php-cgi.exe" -Name "PHP_via_FastCGI" -ResourceType File -Modules "FastCgiModule"
